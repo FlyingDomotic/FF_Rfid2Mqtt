@@ -1,4 +1,4 @@
-#define RFID_2_MQTT_VERSION "24.12.1-1"                             // Version of this code
+#define RFID_2_MQTT_VERSION "25.4.17-1"                             // Version of this code
 
 #include <ESP8266WiFi.h>                                            // WiFi (embedded)
 #include <Arduino.h>                                                // Arduino (embedded)
@@ -18,7 +18,8 @@ static char nodeName[sizeof(rootNodeName)+12+2];                    // Define th
 AsyncMqttClient mqttClient;                                         // Asynchronous MQTT client
 bool mqttStatusReceived = false;                                    // True if we received initial status at startup
 uint8_t mqttDisconnectedCount = 0;                                  // Count of successive disconnected status
-#define MAX_MQTT_DISCONNECTED 15                                    // Restart ESP if more than this number of disconnected count has bee seen
+unsigned long mqttDisconnectedTime = 0;                             // Last disconnection time 
+#define MAX_MQTT_DISCONNECTED 5                                     // Restart ESP if more than this number of disconnected count has bee seen
 static char mqttLastWillTopic[sizeof(mqttRootLastWillTopic)+12+2];
 static char mqttUidTopic[sizeof(mqttRootUidTopic)+12+2];
 static char mqttSetTopic[sizeof(mqttRootSetTopic)+12+2];
@@ -179,6 +180,14 @@ void mqttSetup() {
 
 // MQTT loop
 void mqttLoop(void) {
+    // Check for deconnection every minute
+    if ((millis() - mqttDisconnectedTime) > 60000) {
+        // If MQTT is not connected
+        if (!mqttClient.connected()) {
+            // Try to (re)connect
+            mqttConnect();
+        }
+    }
 }
 
 // Establish connection with MQTT server
@@ -186,6 +195,7 @@ static void mqttConnect() {
     if (!mqttClient.connected()) {                                  // If not yet connected
         setLed(BLINKS_NO_MQTT);                                     // No connected to MQTT
         mqttDisconnectedCount++;                                    // Increment disconnected count
+        mqttDisconnectedTime = millis();                            // MQTT disconnection time
         if (mqttDisconnectedCount > MAX_MQTT_DISCONNECTED) {
             signal(PSTR("Restarting after %d MQTT disconnected events\n"), mqttDisconnectedCount);
             delay(1000);                                            // Give time to mesage to be displayed and sent to syslog
@@ -199,6 +209,7 @@ static void mqttConnect() {
 //Executed when MQTT is connected
 static void onMqttConnect(bool sessionPresent) {
     signal(PSTR("MQTT connected"));
+    mqttDisconnectedCount= 0;                                       // Reset disconnected count
     uint16_t result = mqttClient.publish(mqttLastWillTopic, 0, true,// Last will topic
         "{\"state\":\"up\",\"version\":\"" RFID_2_MQTT_VERSION "\"}");
     if (!result) {
@@ -211,6 +222,7 @@ static void onMqttConnect(bool sessionPresent) {
 //Executed when MQTT is disconnected
 static void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
     signal(PSTR("MQTT disconnected"));
+    mqttDisconnectedTime = millis();                                // MQTT disconnection time
     if (ledSavedSignal != BLINKS_NO_WIFI) {
         setLed(BLINKS_NO_MQTT);                                     // Waiting for badge
     }
